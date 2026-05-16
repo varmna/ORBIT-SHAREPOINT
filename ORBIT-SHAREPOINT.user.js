@@ -192,7 +192,7 @@
             } catch(e) {}
         }
         // Regex fallback
-        var obj = {};
+        obj = {};
         var fields = ['originPageType','originSubPageType','originPageUrl','isPillMessage','pageSourceUrl','responseSource','primary_offline_sub_intent','weblabOverrides'];
         fields.forEach(function(f) {
             var re = new RegExp('"' + f + '"\\s*:\\s*"([^"]*)"');
