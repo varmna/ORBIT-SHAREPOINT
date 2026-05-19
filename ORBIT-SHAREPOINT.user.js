@@ -287,20 +287,18 @@
             };
         }
 
-        // 1. Include static bot messages before first customer
+        // Build rows in index order (bot greetings + annotated customer messages)
         conv.forEach(function(m, idx) {
-            if (m.botMessage && (firstCustIdx === -1 || idx < firstCustIdx)) {
+            if (m.botMessage && !m.llmGeneratedUserMessage) {
+                // Standalone bot message (greeting/static)
                 rows.push(makeRow(m, null, idx, null, true));
+            } else if (m.llmGeneratedUserMessage) {
+                // Customer message - only include if fully annotated
+                var msgAnn = ann[idx] || null;
+                if (!msgAnn || !msgAnn._complete) return;
+                var botMsg = findBot(idx);
+                rows.push(makeRow(m, botMsg, idx, msgAnn, false));
             }
-        });
-
-        // 2. Include annotated customer messages with their bot responses
-        conv.forEach(function(m, idx) {
-            if (!m.llmGeneratedUserMessage) return;
-            var msgAnn = ann[idx] || null;
-            if (!msgAnn) return;
-            var botMsg = findBot(idx);
-            rows.push(makeRow(m, botMsg, idx, msgAnn, false));
         });
 
         return rows;
@@ -383,6 +381,7 @@
             var digest = await getDigest();
             var entityType = await getEntityType();
             var totalOk = 0, totalFail = 0;
+            var customerCount = 0;
 
             for (var c = 0; c < newConvs.length; c++) {
                 var cid = newConvs[c];
@@ -393,6 +392,7 @@
                     try {
                         await addListItem(digest, entityType, buildSPItem(rows[i]));
                         totalOk++;
+                        if (rows[i]['Is Bot First'] !== 'Yes') customerCount++;
                     } catch(e) {
                         console.error('[ORBIT→SP] Failed:', e.message);
                         totalFail++;
@@ -401,6 +401,9 @@
                 }
                 if (convFail === 0) { markPushed(cid); } else { console.warn("[ORBIT→SP] Conv " + cid + " NOT marked (" + convFail + " failed)"); }
             }
+
+            // Write push result for app to read
+            localStorage.setItem('orbit_beta_sp_result', JSON.stringify({ convId: targetConvId, success: totalFail === 0, customerCount: customerCount, ts: Date.now() }));
 
             if (totalFail === 0) {
                 showBanner('✅ ' + totalOk + ' rows pushed to SharePoint!', '#10b981');
@@ -416,36 +419,6 @@
     }
 
     // === LOCK SUBMITTED CONVERSATIONS ===
-    function lockSubmittedConversations() {
-        // Poll every 2 seconds to lock the Submit button if conversation was already pushed
-        setInterval(function() {
-            var convIdEl = document.getElementById('conv-id-display');
-            var saveBtn = document.getElementById('save-btn');
-            if (!convIdEl || !saveBtn) return;
-
-            var convId = convIdEl.textContent.replace(' 🔒', '').trim();
-            if (!convId) return;
-
-            var pushed = getPushed();
-            if (pushed[convId]) {
-                // Lock it
-                saveBtn.disabled = true;
-                saveBtn.textContent = '🔒 Already Submitted to SharePoint';
-                saveBtn.style.background = '#9ca3af';
-                saveBtn.style.cursor = 'not-allowed';
-                if (!convIdEl.textContent.includes('🔒')) {
-                    convIdEl.textContent = convId + ' 🔒';
-                }
-            } else {
-                // Unlock it
-                if (saveBtn.textContent.includes('Already Submitted')) {
-                    saveBtn.disabled = false;
-                    saveBtn.style.background = '#10b981';
-                    saveBtn.style.cursor = 'pointer';
-                }
-            }
-        }, 2000);
-    }
 
     // === AUTO-DETECT USERNAME VIA MIDWAY (bypasses CORS) ===
     function detectUsername() {
@@ -483,7 +456,6 @@
 
     // === INIT ===
     hookSubmit();
-    lockSubmittedConversations();
     detectUsername();
     console.log('[ORBIT→SP] Auto-push script loaded');
 
