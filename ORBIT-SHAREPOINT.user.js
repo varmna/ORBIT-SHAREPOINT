@@ -343,6 +343,19 @@
         _pushing = true;
 
         try {
+            // Check for explicit submit signal from the app
+            var signal = null;
+            try { signal = JSON.parse(localStorage.getItem('orbit_submit_signal') || 'null'); } catch(e) {}
+            if (!signal || !signal.convId || (Date.now() - signal.ts > 10000)) {
+                // No valid signal or signal is stale (>10s old) — do NOT push
+                _pushing = false;
+                return;
+            }
+            // Clear the signal immediately
+            localStorage.removeItem('orbit_submit_signal');
+            var targetConvId = signal.convId;
+            console.log('[ORBIT→SP] Submit signal received for:', targetConvId);
+
             // Wait for IndexedDB to be updated
             await new Promise(function(r) { setTimeout(r, 1500); });
 
@@ -353,18 +366,13 @@
             }
 
             var pushed = getPushed();
-            var newConvs = [];
-
-            // Find conversations that are fully annotated but not yet pushed
-            for (var convId in session.annotations) {
-                if (pushed[convId]) {
-                    console.log('[ORBIT→SP] Skipping ' + convId + ' (already pushed)');
-                    continue;
-                }
-                var convAnns = session.annotations[convId];
-                if (!convAnns || Object.keys(convAnns).length === 0) continue;
-                newConvs.push(convId);
+            if (pushed[targetConvId]) {
+                console.log('[ORBIT→SP] Already pushed:', targetConvId);
+                _pushing = false;
+                return;
             }
+
+            var newConvs = [targetConvId];
 
             if (newConvs.length === 0) {
                 _pushing = false;
@@ -378,6 +386,7 @@
 
             for (var c = 0; c < newConvs.length; c++) {
                 var cid = newConvs[c];
+                var convFail = 0;
                 var rows = buildConversationRows(session, cid);
 
                 for (var i = 0; i < rows.length; i++) {
@@ -387,9 +396,10 @@
                     } catch(e) {
                         console.error('[ORBIT→SP] Failed:', e.message);
                         totalFail++;
+                        convFail++;
                     }
                 }
-                markPushed(cid);
+                if (convFail === 0) { markPushed(cid); } else { console.warn("[ORBIT→SP] Conv " + cid + " NOT marked (" + convFail + " failed)"); }
             }
 
             if (totalFail === 0) {
